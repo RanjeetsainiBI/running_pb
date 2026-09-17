@@ -1,36 +1,70 @@
-name: Sync Amazon data
+name: Sync Amazon data (public-repo runner)
 
-# Each stream runs on its OWN worker (parallel jobs) so it gets a full time
-# budget and we never repeat API calls across streams. Pick a single stream
-# with the `job` input (all | ads | searchterm | seller | finances | ... |
-# returnsbackfill) when testing. `returnsbackfill` is a one-off historical
-# catch-up for seller_returns — it is NOT part of "all" (see the `if:` on
-# that job below) and requires the backfillStart/backfillEnd inputs.
-# `searchterm` is likewise NOT part of "all" — the regular `ads` job already
-# pulls search term data as one of its 10 reports every night; `searchterm`
-# exists only so you can refresh JUST that one report on demand (e.g. right
-# after standing up the Search Term tab) without waiting on the other 9.
+# ============================================================================
+# THIS FILE DOES NOT GO IN THE bi-adlytics REPO. It belongs in a brand-new,
+# SEPARATE public repo you create (any name — e.g. "bi-adlytics-ci"), at
+# path .github/workflows/sync.yml in THAT repo.
 #
-# DORMANT AS OF 2026-09-17 — schedule trigger disabled on purpose (see
-# `schedule:` below, commented out). The live nightly sync moved to a
-# SEPARATE PUBLIC repo's copy of this same workflow, which checks out this
-# private repo's code at runtime via a fine-grained, read-only PAT and runs
-# identically — public repos get unlimited free GitHub-hosted Actions
-# minutes, which is what this repo's `ubuntu-latest` runners were burning
-# through every night (see the minutes-usage conversation this change came
-# from). This file is kept fully intact and unchanged otherwise specifically
-# so switching back is a ONE-LINE change: uncomment the `- cron: "30 2 * * *"`
-# line below (and disable/delete the public repo's copy, or just leave both
-# — see the caveat about that in the chat, not repeated here) to make this
-# the live version again. `workflow_dispatch` still works right now if you
-# ever want to run this repo's copy manually without re-enabling the cron.
+# WHY THIS EXISTS: bi-adlytics (the private repo with your actual app code)
+# was burning through its monthly GitHub Actions minutes allotment — this
+# workflow alone fanned out into ~18 job runs every night. Public repos get
+# UNLIMITED free GitHub-hosted Actions minutes, so this is the exact same
+# workflow, just living in a public repo and checking out the PRIVATE repo's
+# code at runtime instead of its own. No application source code, and no
+# business data, lives in the public repo itself — see the checkout step
+# below and scripts/sync.ts's redacted-by-default logging
+# (SYNC_VERBOSE_LOGS, added 2026-09-17) for exactly what does and doesn't
+# leave the private repo. What IS visible to anyone who opens the public
+# repo: this YAML file itself (job names, schedule, env var NAMES — never
+# values) and this repo's own Actions run logs (which only ever print
+# redacted ok/error lines by default, see scripts/sync.ts).
+#
+# bi-adlytics's OWN copy of this workflow (.github/workflows/sync.yml) is
+# left intact but DORMANT (its `schedule:` trigger is commented out) —
+# switching back to running it there is a one-line uncomment, no rebuild
+# needed. See that file's top comment for the switch-back instructions.
+#
+# ---------------------------------------------------------------------------
+# ONE-TIME SETUP before this can run:
+#
+# 1. Create this repo on github.com/new — Public, empty (no README needed,
+#    though a short one describing it as "CI runner for a private project"
+#    is good practice). Upload this file to .github/workflows/sync.yml here.
+#
+# 2. Create a fine-grained Personal Access Token scoped to ONLY the
+#    bi-adlytics repo, Repository permissions -> Contents: Read-only.
+#    (github.com -> Settings -> Developer settings -> Personal access tokens
+#    -> Fine-grained tokens -> Generate new token -> Repository access:
+#    "Only select repositories" -> bi-adlytics -> Contents: Read-only.)
+#    Set an expiration and put a reminder to renew it before it lapses —
+#    when it expires, every run here starts failing at the checkout step.
+#
+# 3. In THIS public repo's own Settings -> Secrets and variables -> Actions,
+#    add:
+#      PRIVATE_REPO_PAT              <- the token from step 2
+#      NEXT_PUBLIC_SUPABASE_URL      <- same value as in bi-adlytics
+#      SUPABASE_SERVICE_ROLE_KEY     <- same value as in bi-adlytics
+#      TOKEN_ENCRYPTION_KEY          <- same value as in bi-adlytics
+#      AMAZON_LWA_CLIENT_ID          <- same value as in bi-adlytics
+#      AMAZON_LWA_CLIENT_SECRET      <- same value as in bi-adlytics
+#      SP_LWA_CLIENT_ID              <- same value as in bi-adlytics
+#      SP_LWA_CLIENT_SECRET          <- same value as in bi-adlytics
+#    (These are the exact same secret NAMES bi-adlytics already has — just
+#    re-enter the same values here. GitHub secrets never sync across repos,
+#    each repo keeps its own copy, and each is encrypted/masked the same way
+#    regardless of the repo's visibility.)
+#
+# 4. Also generate a package-lock.json situation the same way bi-adlytics
+#    did if `npm ci` complains — unlikely since this checks out bi-adlytics'
+#    own lockfile via the checkout step below, just flagging it as the one
+#    thing that could differ from a fresh repo.
+# ============================================================================
+
 on:
-  # schedule:              <- DISABLED: uncomment this key AND the cron line
-  #   # 08:00 IST daily = 02:30 UTC (IST is UTC+5:30)
-  #   - cron: "30 2 * * *"  to make this repo's copy live again. Left as a
-  #                         block comment rather than an empty `schedule:`
-  #                         key because `schedule:` with no list under it is
-  #                         invalid YAML and would break every trigger below.
+  schedule:
+    # 08:00 IST daily = 02:30 UTC (IST is UTC+5:30) — this is now the LIVE
+    # schedule; bi-adlytics's own copy has this commented out.
+    - cron: "30 2 * * *"
   workflow_dispatch:
     inputs:
       job:
@@ -56,14 +90,16 @@ on:
   repository_dispatch:
     types: [sync]
 
-# Each run gets its own concurrency group so manual syncs never queue behind
-# a scheduled run. Scheduled runs still cancel any already-queued scheduled run
-# (cancel-in-progress: true) to avoid pileups, but manual dispatches are
-# completely independent.
 concurrency:
   group: amazon-sync-${{ github.run_id }}
   cancel-in-progress: false
 
+# Every job below is IDENTICAL to bi-adlytics's own sync.yml, with exactly
+# one addition to the checkout step: `with: repository / ref / token`,
+# pulling bi-adlytics's code into THIS runner instead of this (empty)
+# public repo's own contents. Nothing else differs — same matrix fan-out,
+# same env vars, same scripts. Keep the two files in sync by hand if you
+# ever edit job logic in bi-adlytics/.github/workflows/sync.yml.
 jobs:
   seller:
     needs: sp-profiles
@@ -76,17 +112,14 @@ jobs:
         profile: ${{ fromJson(needs.sp-profiles.outputs.profiles) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          repository: RanjeetsainiBI/bi-adlytics
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
-      # --omit=dev: none of these jobs run `next build`/lint/test (that's
-      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
-      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
-      # tree (the bulk of node_modules) is dead weight here. Combined with
-      # the cache above, this is a meaningful chunk of the ~1min/job npm
-      # install time on every one of these runs - and sync.yml alone fans out
-      # into a couple dozen job runs/day across all the matrix profiles.
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
       - run: node dist/sync.mjs
@@ -95,10 +128,6 @@ jobs:
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "25"
-          # Defensive: the "playwright" package (used only by the SERP tracker
-          # stream) has a postinstall hook that downloads Chromium/Firefox/
-          # WebKit unless this is set — these 6 ad/seller/finance streams
-          # never touch a browser, so skip it to keep npm install fast.
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -108,12 +137,6 @@ jobs:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
 
-  # Evaluates enabled price_automation_rules against current inventory and
-  # stages price_automation_suggestions rows (never pushes to Amazon itself
-  # — see runPriceAutomationEvaluate in lib/sync/core.ts). Safe to run on
-  # the once-daily cron alongside everything else since it's read-only
-  # w.r.t. the live listing; a human approves each suggestion in the Price
-  # Testing tab, which is what actually calls SP-API.
   priceautomation:
     needs: sp-profiles
     if: ${{ needs.sp-profiles.outputs.profiles != '[]' && ((github.event.inputs.job || github.event.client_payload.job || 'all') == 'all' || (github.event.inputs.job || github.event.client_payload.job || 'all') == 'priceautomation') }}
@@ -125,17 +148,14 @@ jobs:
         profile: ${{ fromJson(needs.sp-profiles.outputs.profiles) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          repository: RanjeetsainiBI/bi-adlytics
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
-      # --omit=dev: none of these jobs run `next build`/lint/test (that's
-      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
-      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
-      # tree (the bulk of node_modules) is dead weight here. Combined with
-      # the cache above, this is a meaningful chunk of the ~1min/job npm
-      # install time on every one of these runs - and sync.yml alone fans out
-      # into a couple dozen job runs/day across all the matrix profiles.
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
       - run: node dist/sync.mjs
@@ -153,27 +173,20 @@ jobs:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
 
-  # One-off historical catch-up for seller_returns (see runReturnsBackfill in
-  # lib/sync/core.ts). Deliberately excluded from "all" — only runs when the
-  # `job` input is exactly "returnsbackfill", so the daily cron never touches
-  # it. Requires backfillStart/backfillEnd inputs.
   returnsbackfill:
     if: ${{ (github.event.inputs.job || github.event.client_payload.job || '') == 'returnsbackfill' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          repository: RanjeetsainiBI/bi-adlytics
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
-      # --omit=dev: none of these jobs run `next build`/lint/test (that's
-      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
-      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
-      # tree (the bulk of node_modules) is dead weight here. Combined with
-      # the cache above, this is a meaningful chunk of the ~1min/job npm
-      # install time on every one of these runs - and sync.yml alone fans out
-      # into a couple dozen job runs/day across all the matrix profiles.
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
       - run: node dist/sync.mjs
@@ -193,23 +206,16 @@ jobs:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
 
-  # One-off historical catch-up for the FBA-only returns report (see
-  # runFbaReturnsBackfill in lib/sync/core.ts). Added 2026-09-10: the
-  # 2026-07-17 switch to the "holistic" Returns Report turned out to miss
-  # real FBA return events that never generate a formal return-request/RMA
-  # record (confirmed against a live seller's Seller Central "FBA customer
-  # returns" report) — so the FBA-only report needed to come back as a
-  # SECOND source, not a replacement. This job closes the historical gap
-  # left by that report being un-synced since the cutover; the daily
-  # `seller` job's fbaReturnsStep keeps it current from here on. Run this
-  # once (job=fbareturnsbackfill) after this workflow deploys. Deliberately
-  # excluded from "all", same reasoning as `returnsbackfill` above.
   fbareturnsbackfill:
     if: ${{ (github.event.inputs.job || github.event.client_payload.job || '') == 'fbareturnsbackfill' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          repository: RanjeetsainiBI/bi-adlytics
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -233,15 +239,6 @@ jobs:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
 
-  # Lists active amazon_profiles ids so the `ads` job below can fan out into
-  # one runner PER PROFILE instead of looping through all profiles inside a
-  # single runner's shared 25-minute budget. Root-caused 2026-07-13: with 2+
-  # profiles sharing one deadline, the profile processed first (helped along
-  # by Amazon rate-limiting) could eat most of the 25 minutes, leaving the
-  # next profile too little time for even one of its 8 ad reports to finish
-  # generating — so that profile's spend/impressions silently went stale.
-  # Always runs (regardless of the `job` input) so `fromJson()` below never
-  # sees an empty/skipped output.
   ads-profiles:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -249,17 +246,14 @@ jobs:
       profiles: ${{ steps.list.outputs.profiles }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          repository: RanjeetsainiBI/bi-adlytics
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
-      # --omit=dev: none of these jobs run `next build`/lint/test (that's
-      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
-      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
-      # tree (the bulk of node_modules) is dead weight here. Combined with
-      # the cache above, this is a meaningful chunk of the ~1min/job npm
-      # install time on every one of these runs - and sync.yml alone fans out
-      # into a couple dozen job runs/day across all the matrix profiles.
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/list-ads-profiles.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/list-ads-profiles.mjs
       - id: list
@@ -270,18 +264,6 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
 
-  # Same fan-out fix as ads-profiles above, extended to the 6 SP-API-only
-  # streams (seller/finances/reviews/salestraffic/ranktracker/brandanalytics).
-  # Those jobs still looped over every SP-connected profile inside ONE
-  # runner's shared 25-minute budget (scripts/sync.ts's `for (const id of
-  # spProfiles)` loop) — the exact same starvation bug that was root-caused
-  # and fixed for `ads` on 2026-07-13, just never extended past that one job.
-  # At more than a couple of profiles sharing one deadline, whichever
-  # profiles sort last in the query never get a turn once total per-profile
-  # time exceeds 25 minutes — deterministically, every day, since the query
-  # order doesn't change run to run. Filters on sp_refresh_token_encrypted
-  # (unlike ads-profiles) because these 6 jobs are SP-API-only; a profile
-  # with no SP token would just no-op and waste a runner.
   sp-profiles:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -289,17 +271,14 @@ jobs:
       profiles: ${{ steps.list.outputs.profiles }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          repository: RanjeetsainiBI/bi-adlytics
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
-      # --omit=dev: none of these jobs run `next build`/lint/test (that's
-      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
-      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
-      # tree (the bulk of node_modules) is dead weight here. Combined with
-      # the cache above, this is a meaningful chunk of the ~1min/job npm
-      # install time on every one of these runs - and sync.yml alone fans out
-      # into a couple dozen job runs/day across all the matrix profiles.
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/list-sp-profiles.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/list-sp-profiles.mjs
       - id: list
@@ -321,17 +300,14 @@ jobs:
         profile: ${{ fromJson(needs.ads-profiles.outputs.profiles) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          repository: RanjeetsainiBI/bi-adlytics
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
-      # --omit=dev: none of these jobs run `next build`/lint/test (that's
-      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
-      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
-      # tree (the bulk of node_modules) is dead weight here. Combined with
-      # the cache above, this is a meaningful chunk of the ~1min/job npm
-      # install time on every one of these runs - and sync.yml alone fans out
-      # into a couple dozen job runs/day across all the matrix profiles.
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
       - run: node dist/sync.mjs
@@ -340,10 +316,6 @@ jobs:
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "25"
-          # Defensive: the "playwright" package (used only by the SERP tracker
-          # stream) has a postinstall hook that downloads Chromium/Firefox/
-          # WebKit unless this is set — these 6 ad/seller/finance streams
-          # never touch a browser, so skip it to keep npm install fast.
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -353,11 +325,6 @@ jobs:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
 
-  # Search Term ONLY — fetches just the spSearchTerm report instead of the
-  # full 10-report "ads" run. Not part of "all" (see the top-of-file comment):
-  # only runs when `job` is explicitly "searchterm", same convention as
-  # `returnsbackfill`. Reuses the ads-profiles fan-out so each Amazon profile
-  # still gets its own runner/time-budget instead of looping in one worker.
   searchterm:
     needs: ads-profiles
     if: ${{ needs.ads-profiles.outputs.profiles != '[]' && (github.event.inputs.job || github.event.client_payload.job || '') == 'searchterm' }}
@@ -369,17 +336,14 @@ jobs:
         profile: ${{ fromJson(needs.ads-profiles.outputs.profiles) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          repository: RanjeetsainiBI/bi-adlytics
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
-      # --omit=dev: none of these jobs run `next build`/lint/test (that's
-      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
-      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
-      # tree (the bulk of node_modules) is dead weight here. Combined with
-      # the cache above, this is a meaningful chunk of the ~1min/job npm
-      # install time on every one of these runs - and sync.yml alone fans out
-      # into a couple dozen job runs/day across all the matrix profiles.
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
       - run: node dist/sync.mjs
@@ -408,17 +372,14 @@ jobs:
         profile: ${{ fromJson(needs.sp-profiles.outputs.profiles) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          repository: RanjeetsainiBI/bi-adlytics
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
-      # --omit=dev: none of these jobs run `next build`/lint/test (that's
-      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
-      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
-      # tree (the bulk of node_modules) is dead weight here. Combined with
-      # the cache above, this is a meaningful chunk of the ~1min/job npm
-      # install time on every one of these runs - and sync.yml alone fans out
-      # into a couple dozen job runs/day across all the matrix profiles.
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
       - run: node dist/sync.mjs
@@ -427,10 +388,6 @@ jobs:
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "25"
-          # Defensive: the "playwright" package (used only by the SERP tracker
-          # stream) has a postinstall hook that downloads Chromium/Firefox/
-          # WebKit unless this is set — these 6 ad/seller/finance streams
-          # never touch a browser, so skip it to keep npm install fast.
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -451,17 +408,14 @@ jobs:
         profile: ${{ fromJson(needs.sp-profiles.outputs.profiles) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          repository: RanjeetsainiBI/bi-adlytics
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
-      # --omit=dev: none of these jobs run `next build`/lint/test (that's
-      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
-      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
-      # tree (the bulk of node_modules) is dead weight here. Combined with
-      # the cache above, this is a meaningful chunk of the ~1min/job npm
-      # install time on every one of these runs - and sync.yml alone fans out
-      # into a couple dozen job runs/day across all the matrix profiles.
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
       - run: node dist/sync.mjs
@@ -470,10 +424,6 @@ jobs:
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "25"
-          # Defensive: the "playwright" package (used only by the SERP tracker
-          # stream) has a postinstall hook that downloads Chromium/Firefox/
-          # WebKit unless this is set — these 6 ad/seller/finance streams
-          # never touch a browser, so skip it to keep npm install fast.
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -494,17 +444,14 @@ jobs:
         profile: ${{ fromJson(needs.sp-profiles.outputs.profiles) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          repository: RanjeetsainiBI/bi-adlytics
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
-      # --omit=dev: none of these jobs run `next build`/lint/test (that's
-      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
-      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
-      # tree (the bulk of node_modules) is dead weight here. Combined with
-      # the cache above, this is a meaningful chunk of the ~1min/job npm
-      # install time on every one of these runs - and sync.yml alone fans out
-      # into a couple dozen job runs/day across all the matrix profiles.
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
       - run: node dist/sync.mjs
@@ -513,10 +460,6 @@ jobs:
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "25"
-          # Defensive: the "playwright" package (used only by the SERP tracker
-          # stream) has a postinstall hook that downloads Chromium/Firefox/
-          # WebKit unless this is set — these 6 ad/seller/finance streams
-          # never touch a browser, so skip it to keep npm install fast.
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -537,17 +480,14 @@ jobs:
         profile: ${{ fromJson(needs.sp-profiles.outputs.profiles) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          repository: RanjeetsainiBI/bi-adlytics
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
-      # --omit=dev: none of these jobs run `next build`/lint/test (that's
-      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
-      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
-      # tree (the bulk of node_modules) is dead weight here. Combined with
-      # the cache above, this is a meaningful chunk of the ~1min/job npm
-      # install time on every one of these runs - and sync.yml alone fans out
-      # into a couple dozen job runs/day across all the matrix profiles.
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
       - run: node dist/sync.mjs
@@ -556,10 +496,6 @@ jobs:
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "25"
-          # Defensive: the "playwright" package (used only by the SERP tracker
-          # stream) has a postinstall hook that downloads Chromium/Firefox/
-          # WebKit unless this is set — these 6 ad/seller/finance streams
-          # never touch a browser, so skip it to keep npm install fast.
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -570,10 +506,6 @@ jobs:
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
 
   brandanalytics:
-    # Only pulls new data once a week (the sync itself is idempotent per
-    # ISO week — see runProfileBrandAnalyticsSync), so running it on the same
-    # daily cron as every other stream is harmless: 6 of 7 days it's a
-    # single cheap "already synced" lookup per profile and exits immediately.
     needs: sp-profiles
     if: ${{ needs.sp-profiles.outputs.profiles != '[]' && ((github.event.inputs.job || github.event.client_payload.job || 'all') == 'all' || (github.event.inputs.job || github.event.client_payload.job || 'all') == 'brandanalytics') }}
     runs-on: ubuntu-latest
@@ -584,17 +516,14 @@ jobs:
         profile: ${{ fromJson(needs.sp-profiles.outputs.profiles) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          repository: RanjeetsainiBI/bi-adlytics
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
-      # --omit=dev: none of these jobs run `next build`/lint/test (that's
-      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
-      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
-      # tree (the bulk of node_modules) is dead weight here. Combined with
-      # the cache above, this is a meaningful chunk of the ~1min/job npm
-      # install time on every one of these runs - and sync.yml alone fans out
-      # into a couple dozen job runs/day across all the matrix profiles.
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
       - run: node dist/sync.mjs
@@ -603,10 +532,6 @@ jobs:
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "25"
-          # Defensive: the "playwright" package (used only by the SERP tracker
-          # stream) has a postinstall hook that downloads Chromium/Firefox/
-          # WebKit unless this is set — these 6 ad/seller/finance streams
-          # never touch a browser, so skip it to keep npm install fast.
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
