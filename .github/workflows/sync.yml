@@ -68,7 +68,7 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: "all | ads | searchterm | seller | finances | reviews | salestraffic | ranktracker | brandanalytics | returnsbackfill | fbareturnsbackfill"
+        description: "all | ads | searchterm | seller | finances | reviews | salestraffic | ranktracker | brandanalytics | catalog | returnsbackfill | fbareturnsbackfill"
         required: false
         default: "all"
       amazonProfileId:
@@ -164,6 +164,52 @@ jobs:
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "10"
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+          AMAZON_LWA_CLIENT_ID: ${{ secrets.AMAZON_LWA_CLIENT_ID }}
+          AMAZON_LWA_CLIENT_SECRET: ${{ secrets.AMAZON_LWA_CLIENT_SECRET }}
+          SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
+          SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
+
+  # Refreshes catalog_items (title, images, bullets, and — critically — the
+  # current Amazon Brand) per ASIN via the SP-API Catalog Items endpoint.
+  # This is the SOLE source of Brand shown in Product Performance / Brand
+  # Performance (see buildBrandLookup in
+  # lib/analytics/performance-benchmark-query.ts, 2026-09-04 — the Category
+  # CSV's Brand column stopped being read that day). Added 2026-09-18: this
+  # job never existed before, so catalog_items was always empty for every
+  # account and every SKU rolled up into "Unbranded" from day one — not a
+  # bug in the lookup logic, just a job that was written (runProfileCatalogSync
+  # in lib/sync/core.ts) but never wired into the schedule until now.
+  catalog:
+    needs: sp-profiles
+    if: ${{ needs.sp-profiles.outputs.profiles != '[]' && ((github.event.inputs.job || github.event.client_payload.job || 'all') == 'all' || (github.event.inputs.job || github.event.client_payload.job || 'all') == 'catalog') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: ${{ fromJson(needs.sp-profiles.outputs.profiles) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: RanjeetsainiBI/bi-adlytics
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci --omit=dev --no-audit --no-fund
+      - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
+      - run: node dist/sync.mjs
+        env:
+          SYNC_JOB: catalog
+          SYNC_PROFILE_ID: ${{ matrix.profile }}
+          SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
+          SYNC_MAX_MINUTES: "20"
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
