@@ -187,7 +187,7 @@ jobs:
     needs: sp-profiles
     if: ${{ needs.sp-profiles.outputs.profiles != '[]' && ((github.event.inputs.job || github.event.client_payload.job || 'all') == 'all' || (github.event.inputs.job || github.event.client_payload.job || 'all') == 'catalog') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -209,7 +209,7 @@ jobs:
           SYNC_JOB: catalog
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
-          SYNC_MAX_MINUTES: "20"
+          SYNC_MAX_MINUTES: "30"
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
