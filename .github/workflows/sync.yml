@@ -477,6 +477,13 @@ jobs:
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "25"
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+          # TEMPORARY diagnostic (2026-09-19) — first inventoryledger run came
+          # back "ok" with 0 rows in fba_inventory_ledger, and "ok" doesn't
+          # distinguish 0-rows-written from a caught report error (see
+          # logResult's hasError check in scripts/sync.ts — it only inspects
+          # the top-level results object, not nested results.ledger.error).
+          # Remove this line once the real cause is confirmed.
+          SYNC_VERBOSE_LOGS: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
