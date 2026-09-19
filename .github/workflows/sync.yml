@@ -68,7 +68,7 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: "all | ads | searchterm | seller | finances | reviews | salestraffic | ranktracker | brandanalytics | catalog | returnsbackfill | fbareturnsbackfill"
+        description: "all | ads | searchterm | seller | finances | inventoryledger | reviews | salestraffic | ranktracker | brandanalytics | catalog | returnsbackfill | fbareturnsbackfill"
         required: false
         default: "all"
       amazonProfileId:
@@ -431,6 +431,48 @@ jobs:
       - run: node dist/sync.mjs
         env:
           SYNC_JOB: finances
+          SYNC_PROFILE_ID: ${{ matrix.profile }}
+          SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
+          SYNC_MAX_MINUTES: "25"
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+          AMAZON_LWA_CLIENT_ID: ${{ secrets.AMAZON_LWA_CLIENT_ID }}
+          AMAZON_LWA_CLIENT_SECRET: ${{ secrets.AMAZON_LWA_CLIENT_SECRET }}
+          SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
+          SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
+
+  # Warehouse/FC-level unit balances (GET_LEDGER_SUMMARY_VIEW_DATA) — feeds
+  # fba_inventory_ledger, the table behind the "units warehouse wise
+  # available" request. Added 2026-09-19, same "finances" job shape (one
+  # report fetch per SP-API-connected profile). Not scheduled anywhere else —
+  # if you want this on a different cadence than the shared "all" cron below,
+  # split it out with its own schedule the way pricepush was.
+  inventoryledger:
+    needs: sp-profiles
+    if: ${{ needs.sp-profiles.outputs.profiles != '[]' && ((github.event.inputs.job || github.event.client_payload.job || 'all') == 'all' || (github.event.inputs.job || github.event.client_payload.job || 'all') == 'inventoryledger') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: ${{ fromJson(needs.sp-profiles.outputs.profiles) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: RanjeetsainiBI/bi-adlytics
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci --omit=dev --no-audit --no-fund
+      - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
+      - run: node dist/sync.mjs
+        env:
+          SYNC_JOB: inventoryledger
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "25"
