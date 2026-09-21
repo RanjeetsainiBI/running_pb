@@ -67,10 +67,15 @@ on:
     # 14:00 IST (2:00 PM) = 08:30 UTC — added 2026-09-19, second run of "all"
     # each day alongside the 08:00 IST run above.
     - cron: "30 8 * * *"
+    # 08:30 IST (8:30 AM) = 03:00 UTC, 1st of every month — drives ONLY the
+    # referralcommissions job below (matched via github.event.schedule, not
+    # "all"), since commissions are a once-a-month calculation, not a daily
+    # sync. Added 2026-09-19.
+    - cron: "0 3 1 * *"
   workflow_dispatch:
     inputs:
       job:
-        description: "all | ads | searchterm | seller | finances | inventoryledger | reviews | salestraffic | ranktracker | brandanalytics | catalog | returnsbackfill | fbareturnsbackfill"
+        description: "all | ads | searchterm | seller | finances | inventoryledger | reviews | salestraffic | ranktracker | brandanalytics | catalog | returnsbackfill | fbareturnsbackfill | referralcommissions"
         required: false
         default: "all"
       amazonProfileId:
@@ -593,6 +598,39 @@ jobs:
           AMAZON_LWA_CLIENT_SECRET: ${{ secrets.AMAZON_LWA_CLIENT_SECRET }}
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
+
+  # Computes each referrer's monthly commission ledger (10% recurring, see
+  # referral_program migration). GLOBAL — no sp-profiles/ads-profiles matrix,
+  # no Amazon/SP-API secrets needed, only Supabase (this job never touches
+  # Amazon Ads or SP-API, it only reads subscriptions/referrals and writes
+  # referral_commissions). Runs automatically on the 1st-of-month schedule
+  # above (matched via github.event.schedule, since this is NOT part of
+  # "all"), or manually via workflow_dispatch with job=referralcommissions.
+  # Added 2026-09-19.
+  referralcommissions:
+    if: ${{ github.event.schedule == '0 3 1 * *' || (github.event.inputs.job || github.event.client_payload.job || '') == 'referralcommissions' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: RanjeetsainiBI/bi-adlytics
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci --omit=dev --no-audit --no-fund
+      - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
+      - run: node dist/sync.mjs
+        env:
+          SYNC_JOB: referralcommissions
+          SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
+          SYNC_MAX_MINUTES: "10"
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
 
   brandanalytics:
     needs: sp-profiles
