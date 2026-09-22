@@ -1,0 +1,109 @@
+name: Inventory Ledger sync (warehouse units, public-repo runner)
+
+# ============================================================================
+# THIS FILE GOES IN THE SAME PUBLIC REPO as sync.yml (see that file's own
+# top comment for the one-time setup — same secrets, same PAT, nothing new
+# to configure here). Path: .github/workflows/inventory-ledger.yml in that
+# public repo.
+#
+# WHY A SEPARATE FILE: sync.yml's "all" cron now runs TWICE a day (8am and
+# 2pm IST — see that file's schedule). Bundling inventoryledger into "all"
+# would tie its cadence to whatever "all" happens to run on, and force every
+# OTHER job in sync.yml onto any cadence change made here later. A dedicated
+# file keeps it independent — same reasoning as pricepush having its own
+# price-test-push.yml.
+#
+# Cadence: ONCE A DAY (reduced from an earlier 5x/day version, 2026-09-23,
+# per explicit request — 5x/day was more than needed for a report that's
+# WEEKLY-aggregated on Amazon's side anyway, see runProfileInventoryLedgerSync's
+# doc comment in lib/sync/core.ts for why it's requested as WEEKLY not DAILY).
+# inventoryledger does NOT run from sync.yml's "all" job — it was removed
+# from there on 2026-09-23 specifically to avoid double-firing (once from
+# "all", once from here).
+#
+# Cron time is in UTC (GitHub Actions cron always is); IST = UTC+5:30:
+#   8:00 AM IST -> 02:30 UTC -> "30 2 * * *"  (same time of day as sync.yml's
+#   first "all" run, so both land in the same morning window)
+# ============================================================================
+
+on:
+  schedule:
+    - cron: "30 2 * * *" # 8:00 AM IST, once daily
+  workflow_dispatch:
+    inputs:
+      amazonProfileId:
+        description: "Restrict to one profile id (optional)"
+        required: false
+        default: ""
+      reason:
+        description: "manual | cron"
+        required: false
+        default: "manual"
+  repository_dispatch:
+    types: [inventoryledger]
+
+concurrency:
+  group: inventory-ledger-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  sp-profiles:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      profiles: ${{ steps.list.outputs.profiles }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: RanjeetsainiBI/bi-adlytics
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci --omit=dev --no-audit --no-fund
+      - run: npx esbuild scripts/list-sp-profiles.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/list-sp-profiles.mjs
+      - id: list
+        run: node dist/list-sp-profiles.mjs
+        env:
+          SYNC_PROFILE_ID: ${{ github.event.inputs.amazonProfileId || github.event.client_payload.amazonProfileId || '' }}
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+  inventoryledger:
+    needs: sp-profiles
+    if: ${{ needs.sp-profiles.outputs.profiles != '[]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: ${{ fromJson(needs.sp-profiles.outputs.profiles) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: RanjeetsainiBI/bi-adlytics
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci --omit=dev --no-audit --no-fund
+      - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
+      - run: node dist/sync.mjs
+        env:
+          SYNC_JOB: inventoryledger
+          SYNC_PROFILE_ID: ${{ matrix.profile }}
+          SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
+          SYNC_MAX_MINUTES: "25"
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+          AMAZON_LWA_CLIENT_ID: ${{ secrets.AMAZON_LWA_CLIENT_ID }}
+          AMAZON_LWA_CLIENT_SECRET: ${{ secrets.AMAZON_LWA_CLIENT_SECRET }}
+          SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
+          SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
