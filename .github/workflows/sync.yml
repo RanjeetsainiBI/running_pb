@@ -135,6 +135,10 @@ jobs:
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "25"
+          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
+          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
+          # job in this file either, so setting it silently did nothing.
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -171,6 +175,10 @@ jobs:
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "10"
+          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
+          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
+          # job in this file either, so setting it silently did nothing.
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -217,6 +225,10 @@ jobs:
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "30"
+          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
+          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
+          # job in this file either, so setting it silently did nothing.
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -250,6 +262,10 @@ jobs:
           SYNC_BACKFILL_END: ${{ github.event.inputs.backfillEnd || github.event.client_payload.backfillEnd || '' }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'manual' }}
           SYNC_MAX_MINUTES: "25"
+          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
+          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
+          # job in this file either, so setting it silently did nothing.
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -283,6 +299,10 @@ jobs:
           SYNC_BACKFILL_END: ${{ github.event.inputs.backfillEnd || github.event.client_payload.backfillEnd || '' }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'manual' }}
           SYNC_MAX_MINUTES: "25"
+          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
+          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
+          # job in this file either, so setting it silently did nothing.
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -313,6 +333,10 @@ jobs:
         run: node dist/list-ads-profiles.mjs
         env:
           SYNC_PROFILE_ID: ${{ github.event.inputs.amazonProfileId || github.event.client_payload.amazonProfileId || '' }}
+          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
+          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
+          # job in this file either, so setting it silently did nothing.
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -338,6 +362,10 @@ jobs:
         run: node dist/list-sp-profiles.mjs
         env:
           SYNC_PROFILE_ID: ${{ github.event.inputs.amazonProfileId || github.event.client_payload.amazonProfileId || '' }}
+          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
+          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
+          # job in this file either, so setting it silently did nothing.
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -369,6 +397,10 @@ jobs:
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "25"
+          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
+          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
+          # job in this file either, so setting it silently did nothing.
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -405,6 +437,10 @@ jobs:
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'manual' }}
           SYNC_MAX_MINUTES: "25"
+          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
+          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
+          # job in this file either, so setting it silently did nothing.
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -441,6 +477,10 @@ jobs:
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "25"
+          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
+          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
+          # job in this file either, so setting it silently did nothing.
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -486,6 +526,10 @@ jobs:
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "25"
+          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
+          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
+          # job in this file either, so setting it silently did nothing.
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -522,6 +566,10 @@ jobs:
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "25"
+          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
+          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
+          # job in this file either, so setting it silently did nothing.
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -558,6 +606,10 @@ jobs:
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "25"
+          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
+          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
+          # job in this file either, so setting it silently did nothing.
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -596,6 +648,10 @@ jobs:
           SYNC_JOB: referralcommissions
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "10"
+          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
+          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
+          # job in this file either, so setting it silently did nothing.
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -627,6 +683,10 @@ jobs:
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "25"
+          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
+          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
+          # job in this file either, so setting it silently did nothing.
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

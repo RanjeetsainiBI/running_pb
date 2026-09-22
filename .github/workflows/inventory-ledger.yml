@@ -99,6 +99,14 @@ jobs:
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "25"
+          # Was never actually wired through to the script until 2026-09-23 —
+          # the SYNC_VERBOSE_LOGS repo secret existed in docs/comments but this
+          # env: block never forwarded it, so setting the secret silently did
+          # nothing and every run kept printing the redacted "ok" line
+          # regardless. Remove/unset the secret again once you're done
+          # diagnosing — this is a public repo, and verbose mode prints full
+          # JSON (record counts, error text) into that log while it's on.
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
