@@ -312,11 +312,20 @@ jobs:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
 
-  ads-profiles:
+  # Split into -compute + a same-named passthrough job (2026-09-24) — see the
+  # long comment on sp-profiles-compute below for the full root-cause. Short
+  # version: this job's GITHUB_OUTPUT write was getting silently dropped by
+  # GitHub's "Skip output 'profiles' since it may contain secret" behavior
+  # whenever the JSON profile list happened to coincidentally overlap one of
+  # the secrets referenced below — which broke the ENTIRE downstream fan-out
+  # matrix (every job below with `needs: ads-profiles`), and rotating the
+  # colliding secret only fixes it until the next coincidence. This -compute
+  # job still needs the secrets to query Supabase, but now hands the result
+  # off via a build ARTIFACT (never scanned for secret collisions) instead
+  # of a job output.
+  ads-profiles-compute:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    outputs:
-      profiles: ${{ steps.list.outputs.profiles }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -329,8 +338,7 @@ jobs:
           cache: "npm"
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/list-ads-profiles.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/list-ads-profiles.mjs
-      - id: list
-        run: node dist/list-ads-profiles.mjs
+      - run: node dist/list-ads-profiles.mjs
         env:
           SYNC_PROFILE_ID: ${{ github.event.inputs.amazonProfileId || github.event.client_payload.amazonProfileId || '' }}
           # See inventory-ledger.yml's 2026-09-23 comment on this same line —
@@ -340,12 +348,53 @@ jobs:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ads-profiles-json
+          path: profiles.json
+          retention-days: 1
 
-  sp-profiles:
+  # Kept as the name every downstream `needs: ads-profiles` /
+  # `fromJson(needs.ads-profiles.outputs.profiles)` reference already uses,
+  # so nothing else in this file needed to change. ZERO secrets in this
+  # job's scope — nothing here to collide with, so this output can never be
+  # silently dropped, regardless of what the profile list or any secret
+  # value happens to be.
+  ads-profiles:
+    needs: ads-profiles-compute
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       profiles: ${{ steps.list.outputs.profiles }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ads-profiles-json
+      - id: list
+        run: echo "profiles=$(cat profiles.json)" >> "$GITHUB_OUTPUT"
+
+  # Split into -compute + a same-named passthrough job (2026-09-24). Root
+  # cause: GitHub Actions silently DROPS a job output — rather than erroring
+  # — whenever its text happens to contain an exact substring match of any
+  # secret referenced anywhere in that job (the runner logs "Skip output
+  # 'profiles' since it may contain secret." and moves on). That leaves
+  # `fromJson(needs.sp-profiles.outputs.profiles)` evaluating `fromJson('')`
+  # for every single downstream job below (seller, finances, catalog,
+  # reviews, salestraffic, ranktracker, brandanalytics, priceautomation),
+  # which throws "Unexpected value ''" and kills the entire fan-out matrix —
+  # confirmed live on 2026-09-23/24 (see the chat this fix came from). This
+  # is NOT a one-time fluke: it's a coincidental substring collision between
+  # whatever amazon_profiles ids exist right now and whatever this job's
+  # secrets happen to equal right now, so it can silently recur any time
+  # either side changes (a new profile added, or a secret rotated) — proven
+  # in practice when rotating SUPABASE_SERVICE_ROLE_KEY fixed sp-profiles's
+  # collision but immediately exposed a NEW one on ads-profiles's (larger,
+  # unfiltered) profile list. A build ARTIFACT is never scanned for secret
+  # collisions, so routing the list through one instead of a job output is
+  # the permanent fix, not another rotate-and-hope.
+  sp-profiles-compute:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
@@ -358,8 +407,7 @@ jobs:
           cache: "npm"
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/list-sp-profiles.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/list-sp-profiles.mjs
-      - id: list
-        run: node dist/list-sp-profiles.mjs
+      - run: node dist/list-sp-profiles.mjs
         env:
           SYNC_PROFILE_ID: ${{ github.event.inputs.amazonProfileId || github.event.client_payload.amazonProfileId || '' }}
           # See inventory-ledger.yml's 2026-09-23 comment on this same line —
@@ -369,6 +417,28 @@ jobs:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sp-profiles-json
+          path: profiles.json
+          retention-days: 1
+
+  # Kept as the name every downstream `needs: sp-profiles` /
+  # `fromJson(needs.sp-profiles.outputs.profiles)` reference already uses.
+  # ZERO secrets in this job's scope — nothing here to collide with, so this
+  # output can never be silently dropped.
+  sp-profiles:
+    needs: sp-profiles-compute
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      profiles: ${{ steps.list.outputs.profiles }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: sp-profiles-json
+      - id: list
+        run: echo "profiles=$(cat profiles.json)" >> "$GITHUB_OUTPUT"
 
   ads:
     needs: ads-profiles
