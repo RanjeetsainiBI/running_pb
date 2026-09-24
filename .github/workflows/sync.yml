@@ -75,7 +75,7 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: "all | ads | searchterm | seller | finances | reviews | salestraffic | ranktracker | brandanalytics | catalog | returnsbackfill | fbareturnsbackfill | referralcommissions (inventoryledger runs from its own inventory-ledger.yml, not from here)"
+        description: "all | ads | searchterm | seller | finances | storagefee | reviews | salestraffic | ranktracker | brandanalytics | catalog | returnsbackfill | fbareturnsbackfill | referralcommissions (inventoryledger runs from its own inventory-ledger.yml, not from here)"
         required: false
         default: "all"
       amazonProfileId:
@@ -228,6 +228,49 @@ jobs:
           # See inventory-ledger.yml's 2026-09-23 comment on this same line —
           # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
           # job in this file either, so setting it silently did nothing.
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+          AMAZON_LWA_CLIENT_ID: ${{ secrets.AMAZON_LWA_CLIENT_ID }}
+          AMAZON_LWA_CLIENT_SECRET: ${{ secrets.AMAZON_LWA_CLIENT_SECRET }}
+          SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
+          SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
+
+  # FBA Storage Fee (GET_FBA_STORAGE_FEE_CHARGES_DATA, see
+  # runProfileStorageFeeSync in lib/sync/core.ts) — monthly per-ASIN storage
+  # cost feeding the SKU Economics tab's FBA Storage Fee column (2026-09-24
+  # request). Part of "all" like reimbursements/catalog. Same public-repo
+  # checkout pattern as every other job in this file — see this file's top
+  # comment for why.
+  storagefee:
+    needs: sp-profiles
+    if: ${{ needs.sp-profiles.outputs.profiles != '[]' && ((github.event.inputs.job || github.event.client_payload.job || 'all') == 'all' || (github.event.inputs.job || github.event.client_payload.job || 'all') == 'storagefee') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: ${{ fromJson(needs.sp-profiles.outputs.profiles) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: RanjeetsainiBI/bi-adlytics
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci --omit=dev --no-audit --no-fund
+      - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
+      - run: node dist/sync.mjs
+        env:
+          SYNC_JOB: storagefee
+          SYNC_PROFILE_ID: ${{ matrix.profile }}
+          SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
+          SYNC_MAX_MINUTES: "30"
           SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
