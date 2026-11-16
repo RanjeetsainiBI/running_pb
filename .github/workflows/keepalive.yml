@@ -1,0 +1,30 @@
+name: Keep scheduled workflows alive
+
+# GitHub switches off scheduled workflows in a public repo after 60 days with
+# no commits. Nothing is ever committed here (the code lives in the private
+# bi-adlytics repo), so the nightly Amazon sync and the inventory ledger sync
+# would quietly stop. Re-enabling a workflow through the API resets that
+# 60-day timer (this one's included), so running this twice a month keeps
+# every schedule here alive without any commits.
+
+on:
+  schedule:
+    - cron: "17 3 1,15 * *" # 1st and 15th of each month, 08:47 IST
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Re-enable every workflow (resets the 60-day inactivity timer)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for id in $(gh api "repos/${{ github.repository }}/actions/workflows" --jq '.workflows[].id'); do
+            name=$(gh api "repos/${{ github.repository }}/actions/workflows/$id" --jq '.name')
+            gh api -X PUT "repos/${{ github.repository }}/actions/workflows/$id/enable"
+            echo "Re-enabled: $name"
+          done
