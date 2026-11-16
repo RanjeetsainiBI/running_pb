@@ -75,7 +75,7 @@ on:
   workflow_dispatch:
     inputs:
       job:
-        description: "all | ads | searchterm | seller | finances | storagefee | reviews | salestraffic | ranktracker | brandanalytics | catalog | returnsbackfill | fbareturnsbackfill | referralcommissions (inventoryledger runs from its own inventory-ledger.yml, not from here)"
+        description: "all | ads | searchterm | seller | finances | lightbundle | storagefee | reviews | salestraffic | ranktracker | brandanalytics | priceautomation | catalog | inventoryledger | returnsbackfill | fbareturnsbackfill | referralcommissions (inventoryledger normally runs from its own inventory-ledger.yml)"
         required: false
         default: "all"
       amazonProfileId:
@@ -101,12 +101,12 @@ concurrency:
   group: amazon-sync-${{ github.run_id }}
   cancel-in-progress: false
 
-# Every job below is IDENTICAL to bi-adlytics's own sync.yml, with exactly
-# one addition to the checkout step: `with: repository / ref / token`,
-# pulling bi-adlytics's code into THIS runner instead of this (empty)
-# public repo's own contents. Nothing else differs — same matrix fan-out,
-# same env vars, same scripts. Keep the two files in sync by hand if you
-# ever edit job logic in bi-adlytics/.github/workflows/sync.yml.
+# GENERATED from bi-adlytics/.github/workflows/sync.yml (the job logic's
+# source of truth) by bi-adlytics/scripts/gen-public-sync.mjs, which adds
+# the private-repo checkout (repository / ref / token) to every job and
+# forwards SYNC_VERBOSE_LOGS. Edit jobs THERE, then regenerate this file;
+# only the header, the `on:` schedule and the referralcommissions job are
+# specific to this repo. Last regenerated 2026-11-16.
 jobs:
   seller:
     needs: sp-profiles
@@ -127,18 +127,26 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
+      # --omit=dev: none of these jobs run `next build`/lint/test (that's
+      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
+      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
+      # tree (the bulk of node_modules) is dead weight here. Combined with
+      # the cache above, this is a meaningful chunk of the ~1min/job npm
+      # install time on every one of these runs - and sync.yml alone fans out
+      # into a couple dozen job runs/day across all the matrix profiles.
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
       - run: node dist/sync.mjs
         env:
           SYNC_JOB: seller
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "25"
-          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
-          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
-          # job in this file either, so setting it silently did nothing.
-          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
+          # Defensive: the "playwright" package (used only by the SERP tracker
+          # stream) has a postinstall hook that downloads Chromium/Firefox/
+          # WebKit unless this is set — these 6 ad/seller/finance streams
+          # never touch a browser, so skip it to keep npm install fast.
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -148,9 +156,16 @@ jobs:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
 
+  # Evaluates enabled price_automation_rules against current inventory and
+  # stages price_automation_suggestions rows (never pushes to Amazon itself
+  # — see runPriceAutomationEvaluate in lib/sync/core.ts).
+  # No longer part of "all" (2026-09-24, see the SCALING comment at the top
+  # of this file) — folded into the `lightbundle` job below so it doesn't
+  # cost its own 50-profile matrix every night. Kept here, unchanged
+  # otherwise, purely for standalone `job=priceautomation` manual runs.
   priceautomation:
     needs: sp-profiles
-    if: ${{ needs.sp-profiles.outputs.profiles != '[]' && ((github.event.inputs.job || github.event.client_payload.job || 'all') == 'all' || (github.event.inputs.job || github.event.client_payload.job || 'all') == 'priceautomation') }}
+    if: ${{ needs.sp-profiles.outputs.profiles != '[]' && (github.event.inputs.job || github.event.client_payload.job || 'all') == 'priceautomation' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -167,18 +182,22 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
+      # --omit=dev: none of these jobs run `next build`/lint/test (that's
+      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
+      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
+      # tree (the bulk of node_modules) is dead weight here. Combined with
+      # the cache above, this is a meaningful chunk of the ~1min/job npm
+      # install time on every one of these runs - and sync.yml alone fans out
+      # into a couple dozen job runs/day across all the matrix profiles.
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
       - run: node dist/sync.mjs
         env:
           SYNC_JOB: priceautomation
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "10"
-          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
-          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
-          # job in this file either, so setting it silently did nothing.
-          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -187,6 +206,30 @@ jobs:
           AMAZON_LWA_CLIENT_SECRET: ${{ secrets.AMAZON_LWA_CLIENT_SECRET }}
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
+
+  # Decides whether tonight is a "catalog night" — see the SCALING comment
+  # at the top of this file. catalog_items (title/images/brand) changes
+  # rarely enough that a 1-in-3-day cadence is plenty fresh, and skipping it
+  # 2 nights out of 3 removes the single longest-running stream (up to 100
+  # min/profile for a big catalog) from most nights' job queue entirely.
+  # Day-of-year mod 3 gives a stable, deterministic rotation with no stored
+  # state needed. A direct `job=catalog` dispatch always bypasses this (see
+  # the `if:` on the `catalog` job below) so on-demand/manual runs are never
+  # blocked by the gate.
+  catalog-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - id: check
+        run: |
+          doy=$(date -u +%j)
+          if [ $((10#$doy % 3)) -eq 0 ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          fi
 
   # Refreshes catalog_items (title, images, bullets, and — critically — the
   # current Amazon Brand) per ASIN via the SP-API Catalog Items endpoint.
@@ -198,11 +241,31 @@ jobs:
   # account and every SKU rolled up into "Unbranded" from day one — not a
   # bug in the lookup logic, just a job that was written (runProfileCatalogSync
   # in lib/sync/core.ts) but never wired into the schedule until now.
+  #
+  # `needs: [seller, finances, ads]` + `if: always()` (added 2026-09-24, see
+  # the SCALING comment) — waits for the metrics-critical trio to finish so
+  # they get first claim on the 20-concurrent-job budget; `always()` means a
+  # standalone `job=catalog` dispatch (where seller/finances/ads never ran,
+  # so `needs` resolve as "skipped") is never blocked by them.
   catalog:
-    needs: sp-profiles
-    if: ${{ needs.sp-profiles.outputs.profiles != '[]' && ((github.event.inputs.job || github.event.client_payload.job || 'all') == 'all' || (github.event.inputs.job || github.event.client_payload.job || 'all') == 'catalog') }}
+    needs: [sp-profiles, catalog-gate, seller, finances, ads]
+    if: >-
+      always() &&
+      needs.sp-profiles.outputs.profiles != '[]' &&
+      (
+        (github.event.inputs.job || github.event.client_payload.job || 'all') == 'catalog' ||
+        ((github.event.inputs.job || github.event.client_payload.job || 'all') == 'all' && needs.catalog-gate.outputs.should_run == 'true')
+      )
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    # Bumped from 35 (2026-09-24, ahead of public-app launch): the Catalog
+    # Items API's own ~2 req/s rate limit is the real ceiling here, not the
+    # runner — a large catalog (thousands of ASINs, expected once this
+    # launches for outside sellers with bigger inventories than today's
+    # handful of accounts) needs real headroom to converge, and public-repo
+    # Actions minutes are free (see this workflow's top comment), so there's
+    # no cost reason to keep this tight. SYNC_MAX_MINUTES below is bumped to
+    # match, with room for setup overhead before the job's own timeout hits.
+    timeout-minutes: 100
     strategy:
       fail-fast: false
       matrix:
@@ -222,13 +285,10 @@ jobs:
       - run: node dist/sync.mjs
         env:
           SYNC_JOB: catalog
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
-          SYNC_MAX_MINUTES: "30"
-          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
-          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
-          # job in this file either, so setting it silently did nothing.
-          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
+          SYNC_MAX_MINUTES: "90"
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -238,17 +298,44 @@ jobs:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
 
+  # Decides whether today is a "storage fee day" (2026-09-24 request:
+  # "no need for storage fee daily run, Amazon posts it monthly"). Amazon
+  # only POSTS the GET_FBA_STORAGE_FEE_CHARGES_DATA report once a month, so
+  # running this stream nightly was pure waste — 30 wasted runs for every
+  # 1 useful one. Gated to the first 3 days of the calendar month, giving a
+  # small buffer in case Amazon's own posting is a day or two late, without
+  # waiting a full month to retry if a run fails. A direct `job=storagefee`
+  # dispatch always bypasses this gate, same convention as `catalog-gate`.
+  storagefee-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - id: check
+        run: |
+          dom=$(date -u +%d)
+          if [ $((10#$dom)) -le 3 ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # FBA Storage Fee (GET_FBA_STORAGE_FEE_CHARGES_DATA, see
   # runProfileStorageFeeSync in lib/sync/core.ts) — monthly per-ASIN storage
-  # cost feeding the SKU Economics tab's FBA Storage Fee column (2026-09-24
-  # request). Part of "all" like reimbursements/catalog. Same public-repo
-  # checkout pattern as every other job in this file — see this file's top
-  # comment for why.
+  # cost feeding the SKU Economics tab's FBA Storage Fee column. Gated by
+  # `storagefee-gate` above when running as part of "all" (2026-09-24); a
+  # direct `job=storagefee` dispatch always runs regardless of the gate.
   storagefee:
-    needs: sp-profiles
-    if: ${{ needs.sp-profiles.outputs.profiles != '[]' && ((github.event.inputs.job || github.event.client_payload.job || 'all') == 'all' || (github.event.inputs.job || github.event.client_payload.job || 'all') == 'storagefee') }}
+    needs: [sp-profiles, storagefee-gate]
+    if: >-
+      needs.sp-profiles.outputs.profiles != '[]' &&
+      (
+        (github.event.inputs.job || github.event.client_payload.job || 'all') == 'storagefee' ||
+        ((github.event.inputs.job || github.event.client_payload.job || 'all') == 'all' && needs.storagefee-gate.outputs.should_run == 'true')
+      )
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -268,10 +355,10 @@ jobs:
       - run: node dist/sync.mjs
         env:
           SYNC_JOB: storagefee
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "30"
-          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -281,10 +368,25 @@ jobs:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
 
-  returnsbackfill:
-    if: ${{ (github.event.inputs.job || github.event.client_payload.job || '') == 'returnsbackfill' }}
+  # FBA warehouse-level inventory (GET_LEDGER_SUMMARY_VIEW_DATA, see
+  # runProfileInventoryLedgerSync in lib/sync/core.ts) — feeds the Inventory
+  # Planning tab's new Warehouse Inventory view. Normally runs from its own
+  # dedicated once-a-day workflow on the public repo (_public-repo-ci/
+  # inventory-ledger.yml), NOT from this "all" bucket — added here
+  # (2026-09-24) purely so it can be dispatched and its logs inspected
+  # directly from this repo for debugging (fba_inventory_ledger came back
+  # empty after being wired up, needed a live diagnostic run to find out
+  # why). SYNC_VERBOSE_LOGS=1 so a manual run here always gets full
+  # unredacted output, unlike the public-repo runner's default redacted logs.
+  inventoryledger:
+    needs: sp-profiles
+    if: ${{ needs.sp-profiles.outputs.profiles != '[]' && (github.event.inputs.job || github.event.client_payload.job || 'all') == 'inventoryledger' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: ${{ fromJson(needs.sp-profiles.outputs.profiles) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -299,16 +401,12 @@ jobs:
       - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
       - run: node dist/sync.mjs
         env:
-          SYNC_JOB: returnsbackfill
-          SYNC_PROFILE_ID: ${{ github.event.inputs.amazonProfileId || github.event.client_payload.amazonProfileId || '' }}
-          SYNC_BACKFILL_START: ${{ github.event.inputs.backfillStart || github.event.client_payload.backfillStart || '' }}
-          SYNC_BACKFILL_END: ${{ github.event.inputs.backfillEnd || github.event.client_payload.backfillEnd || '' }}
+          SYNC_JOB: inventoryledger
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
+          SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'manual' }}
           SYNC_MAX_MINUTES: "25"
-          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
-          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
-          # job in this file either, so setting it silently did nothing.
-          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
+          SYNC_VERBOSE_LOGS: "1"
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -318,6 +416,62 @@ jobs:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
 
+  # One-off historical catch-up for seller_returns (see runReturnsBackfill in
+  # lib/sync/core.ts). Deliberately excluded from "all" — only runs when the
+  # `job` input is exactly "returnsbackfill", so the daily cron never touches
+  # it. Requires backfillStart/backfillEnd inputs.
+  returnsbackfill:
+    if: ${{ (github.event.inputs.job || github.event.client_payload.job || '') == 'returnsbackfill' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: RanjeetsainiBI/bi-adlytics
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      # --omit=dev: none of these jobs run `next build`/lint/test (that's
+      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
+      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
+      # tree (the bulk of node_modules) is dead weight here. Combined with
+      # the cache above, this is a meaningful chunk of the ~1min/job npm
+      # install time on every one of these runs - and sync.yml alone fans out
+      # into a couple dozen job runs/day across all the matrix profiles.
+      - run: npm ci --omit=dev --no-audit --no-fund
+      - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
+      - run: node dist/sync.mjs
+        env:
+          SYNC_JOB: returnsbackfill
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
+          SYNC_PROFILE_ID: ${{ github.event.inputs.amazonProfileId || github.event.client_payload.amazonProfileId || '' }}
+          SYNC_BACKFILL_START: ${{ github.event.inputs.backfillStart || github.event.client_payload.backfillStart || '' }}
+          SYNC_BACKFILL_END: ${{ github.event.inputs.backfillEnd || github.event.client_payload.backfillEnd || '' }}
+          SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'manual' }}
+          SYNC_MAX_MINUTES: "25"
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+          AMAZON_LWA_CLIENT_ID: ${{ secrets.AMAZON_LWA_CLIENT_ID }}
+          AMAZON_LWA_CLIENT_SECRET: ${{ secrets.AMAZON_LWA_CLIENT_SECRET }}
+          SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
+          SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
+
+  # One-off historical catch-up for the FBA-only returns report (see
+  # runFbaReturnsBackfill in lib/sync/core.ts). Added 2026-09-10: the
+  # 2026-07-17 switch to the "holistic" Returns Report turned out to miss
+  # real FBA return events that never generate a formal return-request/RMA
+  # record (confirmed against a live seller's Seller Central "FBA customer
+  # returns" report) — so the FBA-only report needed to come back as a
+  # SECOND source, not a replacement. This job closes the historical gap
+  # left by that report being un-synced since the cutover; the daily
+  # `seller` job's fbaReturnsStep keeps it current from here on. Run this
+  # once (job=fbareturnsbackfill) after this workflow deploys. Deliberately
+  # excluded from "all", same reasoning as `returnsbackfill` above.
   fbareturnsbackfill:
     if: ${{ (github.event.inputs.job || github.event.client_payload.job || '') == 'fbareturnsbackfill' }}
     runs-on: ubuntu-latest
@@ -337,15 +491,12 @@ jobs:
       - run: node dist/sync.mjs
         env:
           SYNC_JOB: fbareturnsbackfill
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           SYNC_PROFILE_ID: ${{ github.event.inputs.amazonProfileId || github.event.client_payload.amazonProfileId || '' }}
           SYNC_BACKFILL_START: ${{ github.event.inputs.backfillStart || github.event.client_payload.backfillStart || '' }}
           SYNC_BACKFILL_END: ${{ github.event.inputs.backfillEnd || github.event.client_payload.backfillEnd || '' }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'manual' }}
           SYNC_MAX_MINUTES: "25"
-          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
-          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
-          # job in this file either, so setting it silently did nothing.
-          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -355,17 +506,22 @@ jobs:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
 
+  # Lists active amazon_profiles ids so the `ads` job below can fan out into
+  # one runner PER PROFILE instead of looping through all profiles inside a
+  # single runner's shared 25-minute budget. Root-caused 2026-07-13: with 2+
+  # profiles sharing one deadline, the profile processed first (helped along
+  # by Amazon rate-limiting) could eat most of the 25 minutes, leaving the
+  # next profile too little time for even one of its 8 ad reports to finish
+  # generating — so that profile's spend/impressions silently went stale.
+  # Always runs (regardless of the `job` input) so `fromJson()` below never
+  # sees an empty/skipped output.
   # Split into -compute + a same-named passthrough job (2026-09-24) — see the
-  # long comment on sp-profiles-compute below for the full root-cause. Short
-  # version: this job's GITHUB_OUTPUT write was getting silently dropped by
-  # GitHub's "Skip output 'profiles' since it may contain secret" behavior
-  # whenever the JSON profile list happened to coincidentally overlap one of
-  # the secrets referenced below — which broke the ENTIRE downstream fan-out
-  # matrix (every job below with `needs: ads-profiles`), and rotating the
-  # colliding secret only fixes it until the next coincidence. This -compute
-  # job still needs the secrets to query Supabase, but now hands the result
-  # off via a build ARTIFACT (never scanned for secret collisions) instead
-  # of a job output.
+  # matching, longer comment on sp-profiles-compute below for the full
+  # root-cause (GitHub Actions silently drops a job output whenever its text
+  # coincidentally contains an exact substring of a secret referenced in that
+  # job — "Skip output 'profiles' since it may contain secret" — which broke
+  # the entire fan-out matrix on the public-repo runner on 2026-09-23/24).
+  # Kept in sync with _public-repo-ci/sync.yml's copy of this same fix.
   ads-profiles-compute:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -379,15 +535,18 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
+      # --omit=dev: none of these jobs run `next build`/lint/test (that's
+      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
+      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
+      # tree (the bulk of node_modules) is dead weight here. Combined with
+      # the cache above, this is a meaningful chunk of the ~1min/job npm
+      # install time on every one of these runs - and sync.yml alone fans out
+      # into a couple dozen job runs/day across all the matrix profiles.
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/list-ads-profiles.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/list-ads-profiles.mjs
       - run: node dist/list-ads-profiles.mjs
         env:
           SYNC_PROFILE_ID: ${{ github.event.inputs.amazonProfileId || github.event.client_payload.amazonProfileId || '' }}
-          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
-          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
-          # job in this file either, so setting it silently did nothing.
-          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -397,12 +556,8 @@ jobs:
           path: profiles.json
           retention-days: 1
 
-  # Kept as the name every downstream `needs: ads-profiles` /
-  # `fromJson(needs.ads-profiles.outputs.profiles)` reference already uses,
-  # so nothing else in this file needed to change. ZERO secrets in this
-  # job's scope — nothing here to collide with, so this output can never be
-  # silently dropped, regardless of what the profile list or any secret
-  # value happens to be.
+  # Kept as the name every downstream `needs: ads-profiles` reference already
+  # uses. ZERO secrets in this job's scope — nothing here to collide with.
   ads-profiles:
     needs: ads-profiles-compute
     runs-on: ubuntu-latest
@@ -416,25 +571,34 @@ jobs:
       - id: list
         run: echo "profiles=$(cat profiles.json)" >> "$GITHUB_OUTPUT"
 
+  # Same fan-out fix as ads-profiles above, extended to the 6 SP-API-only
+  # streams (seller/finances/reviews/salestraffic/ranktracker/brandanalytics).
+  # Those jobs still looped over every SP-connected profile inside ONE
+  # runner's shared 25-minute budget (scripts/sync.ts's `for (const id of
+  # spProfiles)` loop) — the exact same starvation bug that was root-caused
+  # and fixed for `ads` on 2026-07-13, just never extended past that one job.
+  # At more than a couple of profiles sharing one deadline, whichever
+  # profiles sort last in the query never get a turn once total per-profile
+  # time exceeds 25 minutes — deterministically, every day, since the query
+  # order doesn't change run to run. Filters on sp_refresh_token_encrypted
+  # (unlike ads-profiles) because these 6 jobs are SP-API-only; a profile
+  # with no SP token would just no-op and waste a runner.
   # Split into -compute + a same-named passthrough job (2026-09-24). Root
   # cause: GitHub Actions silently DROPS a job output — rather than erroring
   # — whenever its text happens to contain an exact substring match of any
   # secret referenced anywhere in that job (the runner logs "Skip output
-  # 'profiles' since it may contain secret." and moves on). That leaves
+  # 'profiles' since it may contain secret." and moves on, leaving
   # `fromJson(needs.sp-profiles.outputs.profiles)` evaluating `fromJson('')`
-  # for every single downstream job below (seller, finances, catalog,
-  # reviews, salestraffic, ranktracker, brandanalytics, priceautomation),
-  # which throws "Unexpected value ''" and kills the entire fan-out matrix —
-  # confirmed live on 2026-09-23/24 (see the chat this fix came from). This
-  # is NOT a one-time fluke: it's a coincidental substring collision between
-  # whatever amazon_profiles ids exist right now and whatever this job's
-  # secrets happen to equal right now, so it can silently recur any time
-  # either side changes (a new profile added, or a secret rotated) — proven
-  # in practice when rotating SUPABASE_SERVICE_ROLE_KEY fixed sp-profiles's
-  # collision but immediately exposed a NEW one on ads-profiles's (larger,
-  # unfiltered) profile list. A build ARTIFACT is never scanned for secret
-  # collisions, so routing the list through one instead of a job output is
-  # the permanent fix, not another rotate-and-hope.
+  # for every downstream job below and killing the whole fan-out matrix).
+  # This is a coincidental substring collision between whatever
+  # amazon_profiles ids exist right now and whatever this job's secrets
+  # happen to equal right now, so it can silently recur any time either side
+  # changes — confirmed live on the public-repo runner on 2026-09-23/24, where
+  # rotating SUPABASE_SERVICE_ROLE_KEY fixed sp-profiles's collision but
+  # immediately exposed a NEW one on ads-profiles's (larger, unfiltered)
+  # profile list. A build ARTIFACT is never scanned for secret collisions, so
+  # routing the list through one instead of a job output is the permanent
+  # fix. Kept in sync with _public-repo-ci/sync.yml's copy of this same fix.
   sp-profiles-compute:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -448,15 +612,18 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
+      # --omit=dev: none of these jobs run `next build`/lint/test (that's
+      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
+      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
+      # tree (the bulk of node_modules) is dead weight here. Combined with
+      # the cache above, this is a meaningful chunk of the ~1min/job npm
+      # install time on every one of these runs - and sync.yml alone fans out
+      # into a couple dozen job runs/day across all the matrix profiles.
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/list-sp-profiles.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/list-sp-profiles.mjs
       - run: node dist/list-sp-profiles.mjs
         env:
           SYNC_PROFILE_ID: ${{ github.event.inputs.amazonProfileId || github.event.client_payload.amazonProfileId || '' }}
-          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
-          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
-          # job in this file either, so setting it silently did nothing.
-          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -466,10 +633,8 @@ jobs:
           path: profiles.json
           retention-days: 1
 
-  # Kept as the name every downstream `needs: sp-profiles` /
-  # `fromJson(needs.sp-profiles.outputs.profiles)` reference already uses.
-  # ZERO secrets in this job's scope — nothing here to collide with, so this
-  # output can never be silently dropped.
+  # Kept as the name every downstream `needs: sp-profiles` reference already
+  # uses. ZERO secrets in this job's scope — nothing here to collide with.
   sp-profiles:
     needs: sp-profiles-compute
     runs-on: ubuntu-latest
@@ -502,18 +667,26 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
+      # --omit=dev: none of these jobs run `next build`/lint/test (that's
+      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
+      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
+      # tree (the bulk of node_modules) is dead weight here. Combined with
+      # the cache above, this is a meaningful chunk of the ~1min/job npm
+      # install time on every one of these runs - and sync.yml alone fans out
+      # into a couple dozen job runs/day across all the matrix profiles.
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
       - run: node dist/sync.mjs
         env:
           SYNC_JOB: ads
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "25"
-          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
-          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
-          # job in this file either, so setting it silently did nothing.
-          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
+          # Defensive: the "playwright" package (used only by the SERP tracker
+          # stream) has a postinstall hook that downloads Chromium/Firefox/
+          # WebKit unless this is set — these 6 ad/seller/finance streams
+          # never touch a browser, so skip it to keep npm install fast.
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -523,6 +696,11 @@ jobs:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
 
+  # Search Term ONLY — fetches just the spSearchTerm report instead of the
+  # full 10-report "ads" run. Not part of "all" (see the top-of-file comment):
+  # only runs when `job` is explicitly "searchterm", same convention as
+  # `returnsbackfill`. Reuses the ads-profiles fan-out so each Amazon profile
+  # still gets its own runner/time-budget instead of looping in one worker.
   searchterm:
     needs: ads-profiles
     if: ${{ needs.ads-profiles.outputs.profiles != '[]' && (github.event.inputs.job || github.event.client_payload.job || '') == 'searchterm' }}
@@ -542,18 +720,22 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
+      # --omit=dev: none of these jobs run `next build`/lint/test (that's
+      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
+      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
+      # tree (the bulk of node_modules) is dead weight here. Combined with
+      # the cache above, this is a meaningful chunk of the ~1min/job npm
+      # install time on every one of these runs - and sync.yml alone fans out
+      # into a couple dozen job runs/day across all the matrix profiles.
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
       - run: node dist/sync.mjs
         env:
           SYNC_JOB: searchterm
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'manual' }}
           SYNC_MAX_MINUTES: "25"
-          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
-          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
-          # job in this file either, so setting it silently did nothing.
-          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -582,18 +764,26 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
+      # --omit=dev: none of these jobs run `next build`/lint/test (that's
+      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
+      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
+      # tree (the bulk of node_modules) is dead weight here. Combined with
+      # the cache above, this is a meaningful chunk of the ~1min/job npm
+      # install time on every one of these runs - and sync.yml alone fans out
+      # into a couple dozen job runs/day across all the matrix profiles.
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
       - run: node dist/sync.mjs
         env:
           SYNC_JOB: finances
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "25"
-          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
-          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
-          # job in this file either, so setting it silently did nothing.
-          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
+          # Defensive: the "playwright" package (used only by the SERP tracker
+          # stream) has a postinstall hook that downloads Chromium/Firefox/
+          # WebKit unless this is set — these 6 ad/seller/finance streams
+          # never touch a browser, so skip it to keep npm install fast.
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -603,18 +793,12 @@ jobs:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
 
-  # Warehouse/FC-level unit balances (GET_LEDGER_SUMMARY_VIEW_DATA) used to
-  # run here too, but that meant it fired on whatever cadence "all" runs on
-  # (twice daily, per the schedule above) plus, briefly, a separate 5x/day
-  # file — nobody asked for either. It now runs EXCLUSIVELY from its own
-  # single-cron workflow, inventory-ledger.yml, in this same public repo —
-  # see that file's top comment. Removed from here 2026-09-23 to stop this
-  # job's `if:` condition (which matched job=='all') from double-firing it
-  # alongside that dedicated file.
-
+  # No longer part of "all" (2026-09-24, see the SCALING comment at the top
+  # of this file) — folded into the `lightbundle` job below. Kept here,
+  # unchanged otherwise, purely for standalone `job=reviews` manual runs.
   reviews:
     needs: sp-profiles
-    if: ${{ needs.sp-profiles.outputs.profiles != '[]' && ((github.event.inputs.job || github.event.client_payload.job || 'all') == 'all' || (github.event.inputs.job || github.event.client_payload.job || 'all') == 'reviews') }}
+    if: ${{ needs.sp-profiles.outputs.profiles != '[]' && (github.event.inputs.job || github.event.client_payload.job || 'all') == 'reviews' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -631,18 +815,26 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
+      # --omit=dev: none of these jobs run `next build`/lint/test (that's
+      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
+      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
+      # tree (the bulk of node_modules) is dead weight here. Combined with
+      # the cache above, this is a meaningful chunk of the ~1min/job npm
+      # install time on every one of these runs - and sync.yml alone fans out
+      # into a couple dozen job runs/day across all the matrix profiles.
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
       - run: node dist/sync.mjs
         env:
           SYNC_JOB: reviews
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "25"
-          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
-          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
-          # job in this file either, so setting it silently did nothing.
-          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
+          # Defensive: the "playwright" package (used only by the SERP tracker
+          # stream) has a postinstall hook that downloads Chromium/Firefox/
+          # WebKit unless this is set — these 6 ad/seller/finance streams
+          # never touch a browser, so skip it to keep npm install fast.
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -652,9 +844,12 @@ jobs:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
 
+  # No longer part of "all" (2026-09-24, see the SCALING comment at the top
+  # of this file) — folded into the `lightbundle` job below. Kept here,
+  # unchanged otherwise, purely for standalone `job=salestraffic` manual runs.
   salestraffic:
     needs: sp-profiles
-    if: ${{ needs.sp-profiles.outputs.profiles != '[]' && ((github.event.inputs.job || github.event.client_payload.job || 'all') == 'all' || (github.event.inputs.job || github.event.client_payload.job || 'all') == 'salestraffic') }}
+    if: ${{ needs.sp-profiles.outputs.profiles != '[]' && (github.event.inputs.job || github.event.client_payload.job || 'all') == 'salestraffic' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -671,18 +866,26 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
+      # --omit=dev: none of these jobs run `next build`/lint/test (that's
+      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
+      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
+      # tree (the bulk of node_modules) is dead weight here. Combined with
+      # the cache above, this is a meaningful chunk of the ~1min/job npm
+      # install time on every one of these runs - and sync.yml alone fans out
+      # into a couple dozen job runs/day across all the matrix profiles.
       - run: npm ci --omit=dev --no-audit --no-fund
       - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
       - run: node dist/sync.mjs
         env:
           SYNC_JOB: salestraffic
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
           SYNC_MAX_MINUTES: "25"
-          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
-          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
-          # job in this file either, so setting it silently did nothing.
-          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
+          # Defensive: the "playwright" package (used only by the SERP tracker
+          # stream) has a postinstall hook that downloads Chromium/Firefox/
+          # WebKit unless this is set — these 6 ad/seller/finance streams
+          # never touch a browser, so skip it to keep npm install fast.
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -692,11 +895,140 @@ jobs:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
 
+  # No longer part of "all" (2026-09-24, see the SCALING comment at the top
+  # of this file) — folded into the `lightbundle` job below. Kept here,
+  # unchanged otherwise, purely for standalone `job=ranktracker` manual runs.
   ranktracker:
     needs: sp-profiles
-    if: ${{ needs.sp-profiles.outputs.profiles != '[]' && ((github.event.inputs.job || github.event.client_payload.job || 'all') == 'all' || (github.event.inputs.job || github.event.client_payload.job || 'all') == 'ranktracker') }}
+    if: ${{ needs.sp-profiles.outputs.profiles != '[]' && (github.event.inputs.job || github.event.client_payload.job || 'all') == 'ranktracker' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: ${{ fromJson(needs.sp-profiles.outputs.profiles) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: RanjeetsainiBI/bi-adlytics
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      # --omit=dev: none of these jobs run `next build`/lint/test (that's
+      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
+      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
+      # tree (the bulk of node_modules) is dead weight here. Combined with
+      # the cache above, this is a meaningful chunk of the ~1min/job npm
+      # install time on every one of these runs - and sync.yml alone fans out
+      # into a couple dozen job runs/day across all the matrix profiles.
+      - run: npm ci --omit=dev --no-audit --no-fund
+      - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
+      - run: node dist/sync.mjs
+        env:
+          SYNC_JOB: ranktracker
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
+          SYNC_PROFILE_ID: ${{ matrix.profile }}
+          SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
+          SYNC_MAX_MINUTES: "25"
+          # Defensive: the "playwright" package (used only by the SERP tracker
+          # stream) has a postinstall hook that downloads Chromium/Firefox/
+          # WebKit unless this is set — these 6 ad/seller/finance streams
+          # never touch a browser, so skip it to keep npm install fast.
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+          AMAZON_LWA_CLIENT_ID: ${{ secrets.AMAZON_LWA_CLIENT_ID }}
+          AMAZON_LWA_CLIENT_SECRET: ${{ secrets.AMAZON_LWA_CLIENT_SECRET }}
+          SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
+          SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
+
+  brandanalytics:
+    # Only pulls new data once a week (the sync itself is idempotent per
+    # ISO week — see runProfileBrandAnalyticsSync), so running it inside
+    # `lightbundle` alongside daily streams is harmless: 6 of 7 days it's a
+    # single cheap "already synced" lookup per profile and exits immediately.
+    # No longer part of "all" directly (2026-09-24, see the SCALING comment
+    # at the top of this file) — folded into `lightbundle` below. Kept here,
+    # unchanged otherwise, purely for standalone `job=brandanalytics` runs.
+    needs: sp-profiles
+    if: ${{ needs.sp-profiles.outputs.profiles != '[]' && (github.event.inputs.job || github.event.client_payload.job || 'all') == 'brandanalytics' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: ${{ fromJson(needs.sp-profiles.outputs.profiles) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: RanjeetsainiBI/bi-adlytics
+          ref: main
+          token: ${{ secrets.PRIVATE_REPO_PAT }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      # --omit=dev: none of these jobs run `next build`/lint/test (that's
+      # Vercel's job + tests.yml) - they only bundle+run scripts/sync.ts via
+      # esbuild, so the Next.js/Tailwind/ESLint/Jest/TypeScript devDependency
+      # tree (the bulk of node_modules) is dead weight here. Combined with
+      # the cache above, this is a meaningful chunk of the ~1min/job npm
+      # install time on every one of these runs - and sync.yml alone fans out
+      # into a couple dozen job runs/day across all the matrix profiles.
+      - run: npm ci --omit=dev --no-audit --no-fund
+      - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
+      - run: node dist/sync.mjs
+        env:
+          SYNC_JOB: brandanalytics
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
+          SYNC_PROFILE_ID: ${{ matrix.profile }}
+          SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
+          SYNC_MAX_MINUTES: "25"
+          # Defensive: the "playwright" package (used only by the SERP tracker
+          # stream) has a postinstall hook that downloads Chromium/Firefox/
+          # WebKit unless this is set — these 6 ad/seller/finance streams
+          # never touch a browser, so skip it to keep npm install fast.
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
+          AMAZON_LWA_CLIENT_ID: ${{ secrets.AMAZON_LWA_CLIENT_ID }}
+          AMAZON_LWA_CLIENT_SECRET: ${{ secrets.AMAZON_LWA_CLIENT_SECRET }}
+          SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
+          SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
+
+  # Combined priceautomation + reviews + salestraffic + ranktracker +
+  # brandanalytics — see the SCALING comment at the top of this file and
+  # scripts/sync.ts's doLightBundle doc comment. One matrix job
+  # (SYNC_JOB=lightbundle) runs all 5 sequentially per profile, instead
+  # of 5 separate matrix jobs each paying their own npm-ci/esbuild overhead
+  # and consuming their own share of the 20-concurrent-job budget.
+  # storagefee is NOT in this bundle — it's on its own monthly-gated cadence
+  # (see `storagefee-gate` above), not a daily one, so bundling it here
+  # would have brought it back to running nightly.
+  #
+  # `needs: [seller, finances, ads]` + `if: always()` (see the `catalog`
+  # job's matching comment above for the full reasoning) — waits for the
+  # metrics-critical trio so they get first claim on available runner slots;
+  # `always()` means a standalone `job=lightbundle` dispatch is never
+  # blocked by streams that didn't run.
+  #
+  # SYNC_MAX_MINUTES is generous (45, vs. 25 for any one of these streams
+  # alone) since this now runs 5 streams back-to-back for the same profile
+  # instead of just 1 — has not been timed against a real large account yet,
+  # watch the first few live runs and adjust if it's cutting streams off.
+  lightbundle:
+    needs: [sp-profiles, seller, finances, ads]
+    if: >-
+      always() &&
+      needs.sp-profiles.outputs.profiles != '[]' &&
+      ((github.event.inputs.job || github.event.client_payload.job || 'all') == 'all' || (github.event.inputs.job || github.event.client_payload.job || 'all') == 'lightbundle')
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
@@ -715,14 +1047,11 @@ jobs:
       - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
       - run: node dist/sync.mjs
         env:
-          SYNC_JOB: ranktracker
+          SYNC_JOB: lightbundle
+          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
-          SYNC_MAX_MINUTES: "25"
-          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
-          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
-          # job in this file either, so setting it silently did nothing.
-          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
+          SYNC_MAX_MINUTES: "45"
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -732,14 +1061,7 @@ jobs:
           SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
           SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
 
-  # Computes each referrer's monthly commission ledger (10% recurring, see
-  # referral_program migration). GLOBAL — no sp-profiles/ads-profiles matrix,
-  # no Amazon/SP-API secrets needed, only Supabase (this job never touches
-  # Amazon Ads or SP-API, it only reads subscriptions/referrals and writes
-  # referral_commissions). Runs automatically on the 1st-of-month schedule
-  # above (matched via github.event.schedule, since this is NOT part of
-  # "all"), or manually via workflow_dispatch with job=referralcommissions.
-  # Added 2026-09-19.
+  # Monthly referral commissions (this repo's 1st-of-month cron only).
   referralcommissions:
     if: ${{ github.event.schedule == '0 3 1 * *' || (github.event.inputs.job || github.event.client_payload.job || '') == 'referralcommissions' }}
     runs-on: ubuntu-latest
@@ -768,43 +1090,3 @@ jobs:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-
-  brandanalytics:
-    needs: sp-profiles
-    if: ${{ needs.sp-profiles.outputs.profiles != '[]' && ((github.event.inputs.job || github.event.client_payload.job || 'all') == 'all' || (github.event.inputs.job || github.event.client_payload.job || 'all') == 'brandanalytics') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        profile: ${{ fromJson(needs.sp-profiles.outputs.profiles) }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          repository: RanjeetsainiBI/bi-adlytics
-          ref: main
-          token: ${{ secrets.PRIVATE_REPO_PAT }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-      - run: npm ci --omit=dev --no-audit --no-fund
-      - run: npx esbuild scripts/sync.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outfile=dist/sync.mjs
-      - run: node dist/sync.mjs
-        env:
-          SYNC_JOB: brandanalytics
-          SYNC_PROFILE_ID: ${{ matrix.profile }}
-          SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'cron' }}
-          SYNC_MAX_MINUTES: "25"
-          # See inventory-ledger.yml's 2026-09-23 comment on this same line —
-          # the SYNC_VERBOSE_LOGS secret was never actually forwarded to any
-          # job in this file either, so setting it silently did nothing.
-          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          TOKEN_ENCRYPTION_KEY: ${{ secrets.TOKEN_ENCRYPTION_KEY }}
-          AMAZON_LWA_CLIENT_ID: ${{ secrets.AMAZON_LWA_CLIENT_ID }}
-          AMAZON_LWA_CLIENT_SECRET: ${{ secrets.AMAZON_LWA_CLIENT_SECRET }}
-          SP_LWA_CLIENT_ID: ${{ secrets.SP_LWA_CLIENT_ID }}
-          SP_LWA_CLIENT_SECRET: ${{ secrets.SP_LWA_CLIENT_SECRET }}
