@@ -106,7 +106,7 @@ concurrency:
 # the private-repo checkout (repository / ref / token) to every job and
 # forwards SYNC_VERBOSE_LOGS. Edit jobs THERE, then regenerate this file;
 # only the header, the `on:` schedule and the referralcommissions job are
-# specific to this repo. Last regenerated 2026-11-16.
+# specific to this repo. Last regenerated 2026-11-17.
 jobs:
   seller:
     needs: sp-profiles
@@ -402,7 +402,6 @@ jobs:
       - run: node dist/sync.mjs
         env:
           SYNC_JOB: inventoryledger
-          SYNC_VERBOSE_LOGS: ${{ secrets.SYNC_VERBOSE_LOGS }}
           SYNC_PROFILE_ID: ${{ matrix.profile }}
           SYNC_REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'manual' }}
           SYNC_MAX_MINUTES: "25"
